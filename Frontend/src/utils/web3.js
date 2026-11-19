@@ -2,8 +2,8 @@ import { ethers } from "ethers";
 import GameItemABI from "../contracts/GameItem.json";
 import GameMarketplaceABI from "../contracts/GameMarketplace.json";
 
-export const GAME_ITEM_ADDRESS = "0x9A676e781A523b5d0C0e43731313A708CB607508";
-export const MARKETPLACE_ADDRESS = "0x0B306BF915C4d645ff596e518fAf3F9669b97016";
+export const GAME_ITEM_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+export const MARKETPLACE_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
 
 // 1. Kết nối ví MetaMask
 export const connectWallet = async () => {
@@ -48,21 +48,17 @@ export const mintAndListNFT = async (tokenURI, priceInEth, fallbackListingId) =>
     const { gameItemContract, marketplaceContract, signer } = await getContracts();
     const userAddress = await signer.getAddress();
 
-    // Bước A: Mint NFT cho Admin
     const mintTx = await gameItemContract.mintItem(userAddress, tokenURI);
     const receipt = await mintTx.wait();
 
-    // Lấy chính xác tokenId vừa mint từ event Transfer của ERC721
     const transferEvent = receipt.logs.find(
         (log) => log.fragment && log.fragment.name === "Transfer"
     );
     const tokenId = transferEvent ? Number(transferEvent.args[2]) : fallbackListingId;
 
-    // Bước B: Cấp quyền (Approve) cho Marketplace được phép chuyển NFT này
     const approveTx = await gameItemContract.approve(MARKETPLACE_ADDRESS, tokenId);
     await approveTx.wait();
 
-    // Bước C: Đăng bán lên chợ
     const priceInWei = ethers.parseEther(priceInEth.toString());
     const listTx = await marketplaceContract.listItem(
         GAME_ITEM_ADDRESS,
@@ -74,7 +70,7 @@ export const mintAndListNFT = async (tokenURI, priceInEth, fallbackListingId) =>
     return tokenId;
 };
 
-// 4. Mua vật phẩm từ chợ
+// 4. Mua vật phẩm từ chợ và trả về Transaction Hash
 export const buyMarketItem = async (listingId, priceInEth) => {
     const { marketplaceContract } = await getContracts();
     const priceInWei = ethers.parseEther(priceInEth.toString());
@@ -82,5 +78,34 @@ export const buyMarketItem = async (listingId, priceInEth) => {
     const buyTx = await marketplaceContract.buyItem(listingId, {
         value: priceInWei,
     });
-    await buyTx.wait();
+    const receipt = await buyTx.wait();
+    return receipt.hash;
+};
+// 5. Truy vấn trực tiếp Blockchain xem ví đang sở hữu những TokenId nào
+export const getOwnedTokenIds = async (walletAddress, maxTokenId) => {
+    if (!window.ethereum || !walletAddress) return [];
+    try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const gameItemContract = new ethers.Contract(
+            GAME_ITEM_ADDRESS,
+            GameItemABI.abi,
+            provider
+        );
+
+        const ownedIds = [];
+        for (let id = 1; id <= maxTokenId; id++) {
+            try {
+                const owner = await gameItemContract.ownerOf(id);
+                if (owner.toLowerCase() === walletAddress.toLowerCase()) {
+                    ownedIds.push(id);
+                }
+            } catch (e) {
+                // Bỏ qua nếu tokenId chưa tồn tại
+            }
+        }
+        return ownedIds;
+    } catch (error) {
+        console.error("Lỗi kiểm tra sở hữu NFT:", error);
+        return [];
+    }
 };
